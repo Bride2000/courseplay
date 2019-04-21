@@ -187,6 +187,7 @@ end
 -- make sure this is called from the derived start() to initialize all common stuff
 function AIDriver:beforeStart()
 	self.turnIsDriving = false
+	self.nextCourse = nil
 	self:deleteCollisionDetector()
 	self:startEngineIfNeeded()
 end
@@ -1048,14 +1049,24 @@ end
 --- If no path found will use an alignment course to reach waypoint ix of course.
 ---@param course Course
 ---@param ix number
----@param vehicleIsOnField boolean use the vehicle's position to determine for which field
--- we need a path. If false, we assume that the course's waypoint at ix is on the field.
 ---@return boolean true when a pathfinding successfully started or an alignment course was added
-function AIDriver:startCourseWithPathfinding(course, ix, vehicleIsOnField)
+function AIDriver:startCourseWithPathfinding(course, ix)
+	-- make sure we have at least a direct course until we figure out a better path. This can happen
+	-- when we don't have a course set yet when starting the pathfinding, for example when starting the course.`
+	self.course = course
+	self.ppc:setCourse(course)
+	self.ppc:initialize(ix)
+	-- no pathfinding when target too close
+	local d = course:getDistanceBetweenVehicleAndWaypoint(self.vehicle, ix)
+	if d < 3 * self.vehicle.cp.turnDiameter then
+		self:debug('Too close to target (%.1fm), will not perform pathfinding', d)
+		return false
+	end
+
 	local tx, _, tz = course:getWaypointPosition(ix)
 	self.courseAfterPathfinding = course
 	self.waypointIxAfterPathfinding = ix
-	if self:driveToPointWithPathfinding(tx, tz, vehicleIsOnField) then
+	if self:driveToPointWithPathfinding(tx, tz) then
 		return true
 	else
 		self.courseAfterPathfinding = nil
@@ -1074,27 +1085,32 @@ end
 ---
 ---@param tx number target coordinate
 ---@param tz number target coordinate
----@param vehicleIsOnField boolean use the vehicle's position to determine for which field
--- we need a path. If false, we assume that target point is on the field.
 ---@return boolean true when a pathfinding successfully started
-function AIDriver:driveToPointWithPathfinding(tx, tz, vehicleIsOnField)
+function AIDriver:driveToPointWithPathfinding(tx, tz)
 	self.turnIsDriving = false
 	if self.vehicle.cp.realisticDriving then
 		local vx, _, vz = getWorldTranslation(self.vehicle.rootNode)
 
+		local fieldNumVehicle = courseplay.fields:getFieldNumForPosition(vx, vz)
+		local fieldNumTarget = courseplay.fields:getFieldNumForPosition(tx, tz)
 		local fieldNum
-		if vehicleIsOnField then
-			-- vehicle is on field, target waypoint may be out of field
-			fieldNum = courseplay.fields:getFieldNumForPosition(vx, vz)
-			tx, tz = self:getClosestPointOnFieldBoundary(tx, tz, fieldNum)
-		else
-			-- target waypoint is on field, vehicle may be off field
-			fieldNum = courseplay.fields:getFieldNumForPosition(tx, tz)
-			vx, vz = self:getClosestPointOnFieldBoundary(vx, vz, fieldNum)
+		self:debug('vehicle is on field %d, target on field %d', fieldNumVehicle, fieldNumTarget)
+		if fieldNumTarget == 0 and fieldNumVehicle > 0 then
+			-- vehicle is on field, target isn't
+			fieldNum = fieldNumVehicle
+			tx, tz = self:getClosestPointOnFieldBoundary(tx, tz, fieldNumVehicle)
+		elseif fieldNumVehicle == 0 and fieldNumTarget > 0 then
+			-- target is on field, vehicle isn't
+			fieldNum = fieldNumTarget
+			vx, vz = self:getClosestPointOnFieldBoundary(vx, vz, fieldNumTarget)
+		elseif fieldNumVehicle > 0 and fieldNumTarget > 0 then
+			-- both on field, just use the vehicle (and assume both are on the same field)
+			fieldNum = fieldNumVehicle
 		end
-		if fieldNum > 0 then
+		if fieldNum then
 			if not self.pathfinder:isActive() then
-				self:debug('Start pathfinding on field %d', fieldNum)
+				self:debug('Start pathfinding on field %d from vehicle at %d/%d (%s) and target at %d/%d (%s)',
+					fieldNum, vx, vz, tostring(courseplay:isField(vx, vz)), tx, tz, tostring(courseplay:isField(tx, tz)))
 				self.pathFindingStartedAt = self.vehicle.timer
 				-- TODO: move this coordinate transformation into the pathfinder, it is internal
 				local done, path = self.pathfinder:start({x = vx, y = -vz}, {x = tx, y = -tz},
@@ -1186,9 +1202,12 @@ function AIDriver:getClosestPointOnFieldBoundary(x, z, fieldNum)
 		-- the pathfinder needs both from/to positions to be on the field so if a  point is not on the
 		-- field, we need to use the closest point on the field boundary instead.
 		local closestPointToTargetIx = courseplay.generation:getClosestPolyPoint(courseplay.fields.fieldData[fieldNum].points, x, z)
+		self:debug('closest %d %d', courseplay.fields.fieldData[ fieldNum ].points[ closestPointToTargetIx ].cx,
+			courseplay.fields.fieldData[ fieldNum ].points[ closestPointToTargetIx ].cz)
 		return courseplay.fields.fieldData[ fieldNum ].points[ closestPointToTargetIx ].cx,
-		courseplay.fields.fieldData[ fieldNum ].points[ closestPointToTargetIx ].cz
+			courseplay.fields.fieldData[ fieldNum ].points[ closestPointToTargetIx ].cz
 	else
+		self:debug('same %d %d', x, z)
 		return x, z
 	end
 end

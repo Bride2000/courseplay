@@ -172,9 +172,8 @@ function FieldworkAIDriver:startFieldworkWithAlignment(ix)
 	end
 end
 
-
 function FieldworkAIDriver:startFieldworkWithPathfinding(ix)
-	if self:startCourseWithPathfinding(self.fieldworkCourse, ix, false) then
+	if self:startCourseWithPathfinding(self.fieldworkCourse, ix) then
 		self.state = self.states.ON_FIELDWORK_COURSE
 		self.fieldworkState = self.states.TEMPORARY
 	else
@@ -264,7 +263,7 @@ function FieldworkAIDriver:stopAndChangeToUnload()
 		self:rememberWaypointToContinueFieldwork()
 		self:debug('at least one tool is empty/full, aborting work at waypoint %d.', self.continueFieldworkAtWaypoint or -1)
 		self:changeToUnloadOrRefill()
-		self:startCourseWithPathfinding(self.unloadRefillCourse, 1, true)
+		self:startCourseWithPathfinding(self.unloadRefillCourse, 1)
 	else
 		self:changeToFieldworkUnloadOrRefill()
 	end
@@ -352,9 +351,11 @@ function FieldworkAIDriver:onEndCourse()
 	else
 		self:debug('Fieldwork AI driver in mode %d ending course', self:getMode())
 		local x, _, z = self.fieldworkCourse:getWaypointPosition(1)
-		if self:driveToPointWithPathfinding(x, z, true) then
+		if self:driveToPointWithPathfinding(x, z) then
 			-- pathfinding was successful, drive back to first point
 			self.state = self.states.RETURNING_TO_FIRST_POINT
+			self:raiseImplements()
+			self:foldImplements()
 		else
 			-- no path or too short, stop here.
 			AIDriver.onEndCourse(self)
